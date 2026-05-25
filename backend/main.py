@@ -1,0 +1,46 @@
+from fastapi import FastAPI
+from fastapi.openapi.utils import get_openapi
+
+from infra.config import settings
+from infra.logging import setup_logging
+from middleware.exception_handler import (
+    generic_exception_handler,
+    http_exception_handler,
+    validation_exception_handler,
+)
+from middleware.request_id import RequestIDMiddleware
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from fastapi.exceptions import RequestValidationError
+
+
+def create_app() -> FastAPI:
+    setup_logging()
+
+    app = FastAPI(
+        title=settings.app_name,
+        version=settings.app_version,
+        docs_url="/docs",
+        openapi_url="/openapi.json",
+    )
+
+    app.add_middleware(RequestIDMiddleware)
+    app.add_exception_handler(StarletteHTTPException, http_exception_handler)
+    app.add_exception_handler(RequestValidationError, validation_exception_handler)
+    app.add_exception_handler(Exception, generic_exception_handler)
+
+    from api.v1.health import router as health_router
+    from api.v1.projects import router as projects_router
+    from api.v1.jobs import router as jobs_router
+
+    app.include_router(health_router, prefix="/api/v1")
+    app.include_router(projects_router, prefix="/api/v1")
+    app.include_router(jobs_router, prefix="/api/v1")
+
+    @app.get("/health", tags=["health"])
+    async def root_health():
+        return {"status": "ok"}
+
+    return app
+
+
+app = create_app()
