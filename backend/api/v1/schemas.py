@@ -151,3 +151,88 @@ class SceneEditRequest(BaseModel):
     dialogue: list | None = None
     storyboard: SceneStoryboardSchema | None = None
     feedback: str | None = None
+
+
+# ── Character schemas (TASK_006) ──────────────────────────────────────────
+
+
+class CharacterProfileSchema(BaseModel):
+    appearance: dict | None = None
+    voice_profile: dict | None = None
+    personality: dict | None = None
+    emotion_range: dict | None = None
+    costume_style: dict | None = None
+    relationship_graph: dict | None = None
+    backstory: str | None = None
+
+
+class CharacterVersionSchema(BaseModel):
+    id: uuid.UUID
+    version_number: int
+    profile_snapshot: dict
+    diff: dict | None = None
+    created_at: datetime
+    created_by: str | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class CharacterResponse(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    name: str
+    description: str | None = None
+    role: str | None = None
+    traits: list | None = None
+    profile: CharacterProfileSchema | None = None
+    version: int = 1
+    locked: bool = False
+    locked_at: datetime | None = None
+    locked_by: str | None = None
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class CharacterListResponse(BaseModel):
+    items: list[CharacterResponse]
+    total: int
+    offset: int
+    limit: int
+
+
+class CharacterGenerateRequest(BaseModel):
+    project_id: uuid.UUID
+    regenerate: bool = False
+
+
+class CharacterGenerateResponse(BaseModel):
+    job_id: uuid.UUID
+    status: str
+    message: str
+
+
+class CharacterSelectRequest(BaseModel):
+    character_ids: list[uuid.UUID]
+    approved: bool = True
+
+
+class CharacterEditRequest(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    role: str | None = None
+    traits: list | None = None
+    profile: CharacterProfileSchema | None = None
+    unlock: bool = False
+    feedback: str | None = None
+
+
+class CharacterVersionListResponse(BaseModel):
+    items: list[CharacterVersionSchema]
+    total: int
+
+
+class CharacterRollbackRequest(BaseModel):
+    version: int

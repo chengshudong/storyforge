@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Enum, Float, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Integer, JSON, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import Uuid
@@ -87,6 +87,11 @@ class Character(Base, UUIDMixin, TimestampMixin):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     role: Mapped[str | None] = mapped_column(String(50), nullable=True)
     traits: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    profile: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    locked: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    locked_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[ProjectStatus] = mapped_column(
         Enum(ProjectStatus, name="project_status"), default=ProjectStatus.PENDING, nullable=False
     )
@@ -94,6 +99,20 @@ class Character(Base, UUIDMixin, TimestampMixin):
     project: Mapped["Project"] = relationship("Project", back_populates="characters")
     assets: Mapped[list["Asset"]] = relationship("Asset", back_populates="character")
     voices: Mapped[list["Voice"]] = relationship("Voice", back_populates="character", cascade="all, delete-orphan")
+    versions: Mapped[list["CharacterVersion"]] = relationship("CharacterVersion", back_populates="character", cascade="all, delete-orphan")
+
+
+class CharacterVersion(Base, UUIDMixin):
+    __tablename__ = "character_versions"
+
+    character_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("characters.id"), nullable=False)
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    profile_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    diff: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    character: Mapped["Character"] = relationship("Character", back_populates="versions")
 
 
 class Prop(Base, UUIDMixin, TimestampMixin):

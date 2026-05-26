@@ -317,3 +317,153 @@ def run_scene_generation(self, project_id: str, episode_id: str, job_id: str, re
                 await fail_job(session, uuid.UUID(job_id), str(e))
 
     asyncio.run(_run())
+
+
+@celery_app.task(name="workflows.character_generation.run", bind=True, max_retries=3, default_retry_delay=60)
+def run_character_generation(self, project_id: str, job_id: str, regenerate: bool = False):
+    """Celery task: run the character generation workflow for a project."""
+    import asyncio
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from infra.config import settings
+    from providers.llm.deepseek import DeepSeekAdapter
+    from providers.llm.openai import OpenAIAdapter
+    from providers.llm.anthropic import AnthropicAdapter
+    from providers.llm.gemini import GeminiAdapter
+    from providers.llm.openrouter import OpenRouterAdapter
+    from providers.llm.local import LocalAdapter
+    from providers.vector.qdrant_adapter import QdrantAdapter
+    from agents.character_agent import CharacterAgent
+    from workflows.character_generation import build_character_workflow, CharacterGenerationState
+    from repository.character_repository import CharacterRepository
+    from repository.project_repository import ProjectRepository
+    from repository.episode_repository import EpisodeRepository
+    from repository.scene_repository import SceneRepository
+    from services.model_router.router import ModelRouter
+    from services.cache_service import CacheService
+    from infra.queue import complete_job, fail_job, update_job_progress
+
+    async def _run():
+        engine = create_async_engine(settings.database_url)
+        async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+        provider_map = {
+            "deepseek": DeepSeekAdapter(), "openai": OpenAIAdapter(),
+            "anthropic": AnthropicAdapter(), "gemini": GeminiAdapter(),
+            "openrouter": OpenRouterAdapter(), "local": LocalAdapter(),
+        }
+        registry = _load_registry()
+        router = ModelRouter(provider_map, registry)
+        cache = CacheService()
+        vector_store = QdrantAdapter()
+        character_agent = CharacterAgent(router, cache, vector_store)
+
+        async with async_session() as session:
+            try:
+                await update_job_progress(session, uuid.UUID(job_id), 5, "Starting character generation")
+
+                project_repo = ProjectRepository(session)
+                project = await project_repo.get(uuid.UUID(project_id))
+                if project is None:
+                    await fail_job(session, uuid.UUID(job_id), "Project not found")
+                    return
+
+                meta = project.meta or {}
+                relationships = meta.get("relationships", [])
+                entities_persons = meta.get("entities", {}).get("persons", [])
+                world_setting = meta.get("world_setting", {})
+
+                # Load chapter summaries from project meta
+                chapter_summaries: list[dict] = meta.get("chapter_summaries", [])
+                if not chapter_summaries:
+                    # Fallback: synthesize from story_summary
+                    story = meta.get("story_summary", "")
+                    if story:
+                        chapter_summaries = [{"chapter_index": 1, "chapter_summary": story}]
+
+                # Collect scene characters_present
+                scene_repo = SceneRepository(session)
+                episode_repo = EpisodeRepository(session)
+                episodes = await episode_repo.list_by_project(uuid.UUID(project_id))
+                all_scenes: list[dict] = []
+                scene_characters: list[str] = []
+                for ep in episodes:
+                    ep_scenes = await scene_repo.list_by_episode(ep.id)
+                    for sc in ep_scenes:
+                        sc_dict = {
+                            "id": str(sc.id),
+                            "scene_number": sc.scene_number,
+                            "title": sc.title,
+                            "description": sc.description,
+                            "storyboard": sc.storyboard,
+                        }
+                        all_scenes.append(sc_dict)
+                        chars = (sc.storyboard or {}).get("characters_present", [])
+                        for c in chars:
+                            if c not in scene_characters:
+                                scene_characters.append(c)
+
+                await update_job_progress(session, uuid.UUID(job_id), 10,
+                                          f"Found {len(entities_persons)} entities, "
+                                          f"{len(relationships)} relationships, "
+                                          f"{len(all_scenes)} scenes")
+
+                char_repo = CharacterRepository(session)
+                workflow = build_character_workflow(character_agent, char_repo, session)
+
+                initial_state = CharacterGenerationState(
+                    project_id=project_id,
+                    chapter_summaries=chapter_summaries,
+                    relationships=relationships,
+                    entities_persons=entities_persons,
+                    scene_characters=scene_characters,
+                    scenes=all_scenes,
+                    world_setting=world_setting,
+                )
+
+                config = {"configurable": {"thread_id": f"{project_id}_characters"}}
+                await update_job_progress(session, uuid.UUID(job_id), 15, "Running extract node")
+
+                final_state = None
+                async for event in workflow.astream(initial_state, config):
+                    for node_name, node_output in event.items():
+                        if isinstance(node_output, dict):
+                            status = node_output.get("status", "")
+                            if status == "extracted":
+                                count = len(node_output.get("extracted_characters", []))
+                                await update_job_progress(session, uuid.UUID(job_id), 30,
+                                                          f"Extracted {count} characters")
+                            elif status == "profiled":
+                                count = len(node_output.get("profiled_characters", []))
+                                await update_job_progress(session, uuid.UUID(job_id), 55,
+                                                          f"Profiled {count} characters")
+                            elif status == "merged":
+                                count = len(node_output.get("merged_characters", []))
+                                await update_job_progress(session, uuid.UUID(job_id), 70,
+                                                          f"Merged to {count} characters")
+                            elif status == "normalized":
+                                issues = len(node_output.get("issues", []))
+                                await update_job_progress(session, uuid.UUID(job_id), 85,
+                                                          f"Normalized ({issues} issues)")
+                            elif status == "done":
+                                await update_job_progress(
+                                    session, uuid.UUID(job_id), 95,
+                                    f"Saved {len(node_output.get('saved_character_ids', []))} characters",
+                                )
+                            elif status == "failed":
+                                await fail_job(session, uuid.UUID(job_id),
+                                               node_output.get("error", "Unknown error"))
+                                return
+                            final_state = node_output
+
+                await complete_job(session, uuid.UUID(job_id), result={
+                    "characters_saved": final_state.get("saved_character_ids", []) if final_state else [],
+                    "issues": final_state.get("issues", []) if final_state else [],
+                })
+
+            except Exception as e:
+                logger.exception("character generation workflow failed")
+                await fail_job(session, uuid.UUID(job_id), str(e))
+
+    asyncio.run(_run())
