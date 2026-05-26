@@ -28,16 +28,16 @@ Open:
 
 ```
 backend/            FastAPI application
-  agents/           AI agents (NovelAgent, StoryAgent, EpisodeAgent, SceneAgent)
+  agents/           AI agents (NovelAgent, StoryAgent, EpisodeAgent, SceneAgent, CharacterAgent, ImageAgent)
   alembic/          Database migrations
-  api/v1/           REST endpoints (health, projects, parse, models, generate, jobs, scenes)
+  api/v1/           REST endpoints (health, projects, parse, models, generate, jobs, scenes, characters, assets)
   config/           Model registry (models.yaml)
   domain/           ORM models + shared mixins
   infra/            Infrastructure (DB, Redis, MinIO, Celery)
-  interfaces/       Provider interfaces (LLM, parser, context, vector, storyboard)
+  interfaces/       Provider interfaces (LLM, parser, context, vector, storyboard, image)
   middleware/       Request ID, exception handlers
-  prompts/          LLM prompt templates (summary, extraction, episode, scene)
-  providers/        Provider adapters (llm, novel, context, vector)
+  prompts/          Prompt templates (LLM: summary, extraction, episode, scene, character; Deterministic: image)
+  providers/        Provider adapters (llm, novel, context, vector, image)
   repository/       Data access layer (9 model repos + base)
   service/          Business logic
   services/         Shared services (model_router, cache, cost_logger)
@@ -49,7 +49,7 @@ frontend/           Next.js application
     i18n/           Internationalization (zh/en)
     lib/            API client, zustand store, utilities
 infra/              Docker compose, nginx, init scripts
-tests/              pytest suite (84+ tests)
+tests/              pytest suite (165+ tests)
 docs/               Documentation
 ```
 
@@ -75,6 +75,19 @@ docs/               Documentation
 | POST | `/api/v1/models/test` | 200 | Test model generation |
 | GET | `/api/v1/jobs` | 200 | List jobs (?project_id= filter) |
 | GET | `/api/v1/jobs/{id}` | 200 | Get job by ID |
+| POST | `/api/v1/characters/generate` | 202 | Generate character profiles via LLM |
+| GET | `/api/v1/characters?project_id=` | 200 | List characters (paginated, with role/locked filters) |
+| GET | `/api/v1/characters/{id}` | 200 | Get character with full profile |
+| GET | `/api/v1/characters/{id}/versions` | 200 | Get character version history |
+| PATCH | `/api/v1/characters/{id}` | 200 | Edit character (lock check 409) |
+| POST | `/api/v1/characters/{id}/rollback` | 200 | Rollback to version N |
+| POST | `/api/v1/assets/generate` | 202 | Generate images via ComfyUI (char_ref/char_scene/bg/prop/cover) |
+| POST | `/api/v1/assets/select` | 200 | Approve/select generated assets |
+| POST | `/api/v1/assets/favorite` | 200 | Favorite/unfavorite assets |
+| GET | `/api/v1/assets?project_id=&character_id=&scene_id=&asset_type=` | 200 | List assets (paginated, with filters) |
+| GET | `/api/v1/assets/{id}` | 200 | Get asset with generation metadata |
+| PATCH | `/api/v1/assets/{id}` | 200 | Edit asset (lock/unlock, feedback, regenerate) |
+| DELETE | `/api/v1/assets/{id}` | 204 | Delete asset (409 if locked) |
 
 Error format: `{"code":"ERROR_CODE","message":"Human message","data":{}}`
 
@@ -88,6 +101,7 @@ Error format: `{"code":"ERROR_CODE","message":"Human message","data":{}}`
 | Novel Parsing | Unstructured | NovelParser |
 | Long Context | LlamaIndex + SentenceTransformer | ContextStore |
 | Vector Storage | Qdrant | VectorStore |
+| Image Generation | ComfyUI (SDXL + InstantID) | ComfyUIAdapter |
 | Workflow | LangGraph | Built-in |
 
 ## Phase Progress
@@ -100,8 +114,8 @@ Error format: `{"code":"ERROR_CODE","message":"Human message","data":{}}`
 | 3A | TASK_003A | Model Gateway | ✅ |
 | 4 | TASK_004 | Story Generation | ✅ |
 | 5 | TASK_005 | Scene Generation / Storyboard | ✅ |
-| 6 | TASK_006 | Character | 🔲 |
-| 7 | TASK_007 | Image | 🔲 |
+| 6 | TASK_006 | Character | ✅ |
+| 7 | TASK_007 | Image | ✅ |
 | 8 | TASK_008 | Voice | 🔲 |
 | 9 | TASK_009 | Video | 🔲 |
 | 10 | TASK_010 | Editing | 🔲 |
@@ -141,7 +155,8 @@ pytest tests/ -v
 | [docs/MODEL_POLICY.md](docs/MODEL_POLICY.md) | Model routing, timeout, retry, cache, cost policies |
 | [docs/INTEGRATION_POLICY.md](docs/INTEGRATION_POLICY.md) | OSS integration policy |
 | [docs/OSS_REGISTRY.md](docs/OSS_REGISTRY.md) | Approved provider registry |
-| [docs/PROMPTS.md](docs/PROMPTS.md) | Prompt design (story + scene generation) |
+| [docs/PROMPTS.md](docs/PROMPTS.md) | Prompt design (story + scene + character + image) |
+| [docs/ASSET_GUIDE.md](docs/ASSET_GUIDE.md) | Asset generation pipeline guide |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System architecture |
 | [docs/STARTUP.md](docs/STARTUP.md) | Startup guide |
 | [docs/ER_DIAGRAM.md](docs/ER_DIAGRAM.md) | Entity-relationship diagram |

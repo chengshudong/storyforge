@@ -1,5 +1,79 @@
 # CHANGELOG
 
+## [task-007-complete] — Image / Asset Generation — 2026-05-26
+
+### Added
+- **ImageProvider interface** (`backend/interfaces/image.py`) — ABC with `generate(workflow) → prompt_id`, `poll(prompt_id) → ImageResult`, `upload_image(filename, data) → str`, `health() → bool`. `ImageStatus` enum (PENDING/RUNNING/DONE/FAILED). `ImageResult` dataclass.
+- **ComfyUIAdapter** (`backend/providers/image/comfyui_adapter.py`, 195 lines) — Async httpx REST client for ComfyUI HTTP API:
+  - `POST /api/prompt` — submit workflow JSON
+  - `GET /api/history/{id}` — poll with 60 iterations × 2s = 2min timeout per generation
+  - `GET /api/view?filename=` — download generated images
+  - `POST /api/upload/image` — upload reference portrait for InstantID
+  - Health check via `/system_stats`
+- **InstantIDWorkflow** (`backend/providers/image/comfyui_adapter.py`) — Static workflow builders:
+  - `build_character_ref_workflow()` — SDXL workflow: CheckpointLoaderSimple → CLIPTextEncode(×2) → KSampler → VAEDecode → SaveImage
+  - `build_instantid_workflow()` — SDXL + IPAdapterInstantID node for face-consistent character images (ip_weight=0.8)
+- **5 deterministic image prompt templates** (`backend/prompts/image.py`, 210 lines) — No LLM involved:
+  - `CharacterRefPrompt` — Portrait prompt from profile (appearance + costume_style)
+  - `CharacterScenePrompt` — Character-in-scene prompt from profile + storyboard + action
+  - `BackgroundPrompt` — Environment-only prompt from storyboard location/camera/emotion/props
+  - `PropPrompt` — Isolated product-shot prompt from prop name/description/type
+  - `CoverPrompt` — Poster-art prompt from project title/description/world/characters/mood
+  - Module-level `_build_physique()` and `_build_outfit()` helpers
+- **ImageAgent** (`backend/agents/image_agent.py`, 228 lines) — Generation orchestration without LLM:
+  - `generate_char_ref(name, profile, seed, params)` → prompt_id
+  - `generate_char_scene(name, profile, storyboard, face_ref, seed, params, action)` → prompt_id
+  - `generate_background(storyboard, seed, params)` → prompt_id
+  - `generate_prop(name, description, prop_type, seed, params)` → prompt_id
+  - `generate_cover(title, description, world_setting, key_characters, seed, params)` → prompt_id
+  - `poll(prompt_id)` → ImageResult
+  - `upload_face_ref(filename, data)` → comfyui_name
+  - `save_asset(...)` → MinIO upload + Asset DB record
+- **LangGraph image workflow** (`backend/workflows/image_generation.py`, 462 lines) — 7-node DAG:
+  - `char_ref → upload_refs → char_scene → bg → prop → cover → save`
+  - Each phase skippable via config; conditional fail-fast edges route to save on error
+  - `MemorySaver` checkpointer for resumability
+  - `_seeds_for_variants()` deterministic seed generator
+  - Saves all accumulated assets from completed phases even when later phases fail
+- **Celery task** (`backend/workflows/tasks.py`): `workflows.image_generation.run` — max_retries=2, default_retry_delay=120s. Loads characters/scenes/props from DB, initializes ComfyUIAdapter + ImageAgent, runs workflow with progress updates at each phase transition.
+- **PropRepository** (`backend/repository/prop_repository.py`) — list_by_project, list_by_scene
+- **7 asset API endpoints** (`backend/api/v1/assets.py`, 213 lines):
+  - `POST /assets/generate` (202) — Trigger image generation async via Celery
+  - `POST /assets/select` — Approve/select assets by IDs
+  - `POST /assets/favorite` — Favorite/unfavorite assets by IDs
+  - `GET /assets?project_id=&character_id=&scene_id=&asset_type=` — List with filters (paginated)
+  - `GET /assets/{id}` — Get single asset with all metadata
+  - `PATCH /assets/{id}` — Edit (lock/unlock, store feedback, trigger regenerate)
+  - `DELETE /assets/{id}` (204) — Delete asset (409 if locked)
+- **8 asset Pydantic schemas** (`backend/api/v1/schemas.py`): AssetGenerationParams, AssetResponse, AssetListResponse, AssetGenerateRequest, AssetGenerateResponse, AssetSelectRequest, AssetFavoriteRequest, AssetEditRequest
+- **Alembic migration 004** — Extended assets table: +prompt, +negative_prompt, +seed, +generation_params(JSONB), +variation_of(FK→assets), +batch_id, +selected, +favorite, +locked, +locked_at, +asset_ref. Created generation_batches table. Added 'cover' to asset_type enum.
+- **Extended Asset model** (`backend/domain/models.py`): +11 columns, AssetType.COVER, GenerationBatch model (project_id, status, total_assets, completed_assets)
+- **40 new tests**: 20 image prompts, 14 ImageAgent, 6 workflow (all passing, 165 total)
+
+### Design Decisions
+- **Zero LLM image prompts**: All 5 prompt classes are deterministic string builders from structured data. No LLM calls in the entire image pipeline. Contrast with CharacterAgent which uses 4 LLM calls per run.
+- **InstantID face consistency**: `char_ref` phase generates a reference portrait (no InstantID). That portrait is uploaded to ComfyUI. `char_scene` phase uses IPAdapterInstantID with the uploaded reference for face-consistent character images across all scenes.
+- **First-variant-as-reference**: The workflow uses `char_assets[0]` (first variant) as the InstantID face reference. No quality scoring or human selection of the best reference portrait — deferred to the select/favorite API.
+- **Separate ImageProvider interface**: Image generation does NOT go through ModelRouter. The `ImageProvider` ABC is purpose-built for ComfyUI's REST API pattern (submit → poll → download).
+- **Phase-skippable DAG**: Each phase node checks `PHASE_X in state.phases` and returns `*_skipped` if not requested. Default phases: `["char_ref", "char_scene", "bg", "prop"]`. Cover is opt-in.
+- **Fail-fast but save-accumulated**: On any phase failure, conditional edges route to save node which persists all assets from completed phases before ending. No orphaned generated images.
+- **Serial generation within phases**: Each image is submitted and polled sequentially (not concurrent). Trade-off: simpler error handling vs ~3-4× longer wall-clock time. Contrasts with CharacterAgent which uses `asyncio.Semaphore(5)`.
+
+### Known Limitations
+- **No image caching**: Unlike CharacterAgent (CacheService + Redis 24h TTL), the image pipeline has zero caching. Identical (profile, seed, params) will re-run ComfyUI every time.
+- **No per-image retry**: ComfyUIAdapter.generate() has no retry on connection failure. One failed submit abandons that image slot.
+- **MemorySaver only**: Workflow checkpoints are in-memory; lost on process restart. Not suitable for long-running production without persistent checkpointer.
+- **No concurrent generation**: Within a phase, all images are generated serially (submit → poll → next). For 4 variants × 5 scenes × 2 characters, wall-clock time = ~17 minutes vs ~4 minutes with concurrent submission.
+- **clip_vision node wiring**: `build_instantid_workflow()` references `["4", 3]` for CLIP Vision output — requires ComfyUI IP-Adapter custom nodes and a checkpoint that outputs CLIP Vision at index 3. May fail at runtime without the correct ComfyUI extensions installed.
+
+### Preserved
+- All TASK_001–TASK_006 agents — Unchanged (StoryAgent, EpisodeAgent, SceneAgent, CharacterAgent)
+- ModelRouter / CacheService / CostLogger — Unchanged (not used by image pipeline)
+- All existing API endpoints — Unchanged
+- All existing tests — 165 passing, no regressions
+
+---
+
 ## [task-005-complete] — Scene Generation / Storyboard Layer — 2026-05-26
 
 ### Added

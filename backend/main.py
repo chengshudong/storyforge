@@ -38,6 +38,7 @@ def create_app() -> FastAPI:
     from api.v1.scenes import router as scenes_episode_router
     from api.v1.scenes import scenes_router
     from api.v1.characters import router as characters_router
+    from api.v1.assets import router as assets_router
 
     app.include_router(health_router, prefix="/api/v1")
     app.include_router(parse_router, prefix="/api/v1")
@@ -49,6 +50,7 @@ def create_app() -> FastAPI:
     app.include_router(scenes_episode_router, prefix="/api/v1")
     app.include_router(scenes_router, prefix="/api/v1")
     app.include_router(characters_router, prefix="/api/v1")
+    app.include_router(assets_router, prefix="/api/v1")
 
     @app.get("/health", tags=["health"])
     async def root_health():

@@ -236,3 +236,78 @@ class CharacterVersionListResponse(BaseModel):
 
 class CharacterRollbackRequest(BaseModel):
     version: int
+
+
+# ── Asset / Image schemas (TASK_007) ─────────────────────────────────────
+
+
+class AssetGenerationParams(BaseModel):
+    checkpoint: str | None = None
+    steps: int = 25
+    cfg: float = 7.5
+    sampler: str = "dpmpp_2m"
+    width: int = 768
+    height: int = 1152
+
+
+class AssetResponse(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    character_id: uuid.UUID | None = None
+    scene_id: uuid.UUID | None = None
+    asset_type: str
+    file_path: str
+    file_size: int | None = None
+    prompt: str | None = None
+    negative_prompt: str | None = None
+    seed: int | None = None
+    generation_params: dict | None = None
+    variation_of: uuid.UUID | None = None
+    batch_id: uuid.UUID | None = None
+    selected: bool = False
+    favorite: bool = False
+    locked: bool = False
+    locked_at: datetime | None = None
+    asset_ref: str | None = None
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class AssetListResponse(BaseModel):
+    items: list[AssetResponse]
+    total: int
+    offset: int
+    limit: int
+
+
+class AssetGenerateRequest(BaseModel):
+    project_id: uuid.UUID
+    regenerate: bool = False
+    variant_count: int = 4
+    phases: list[str] = ["char_ref", "char_scene", "bg", "prop"]
+
+
+class AssetGenerateResponse(BaseModel):
+    job_id: uuid.UUID
+    batch_id: uuid.UUID | None = None
+    status: str
+    message: str
+
+
+class AssetSelectRequest(BaseModel):
+    asset_ids: list[uuid.UUID]
+    selected: bool = True
+
+
+class AssetFavoriteRequest(BaseModel):
+    asset_ids: list[uuid.UUID]
+    favorite: bool = True
+
+
+class AssetEditRequest(BaseModel):
+    locked: bool | None = None
+    feedback: str | None = None
+    regenerate: bool = False

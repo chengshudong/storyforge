@@ -129,6 +129,7 @@ class AssetType(str, enum.Enum):
     IMAGE = "image"
     CHARACTER_IMAGE = "character_image"
     STORYBOARD = "storyboard"
+    COVER = "cover"
     OTHER = "other"
 
 
@@ -141,6 +142,17 @@ class Asset(Base, UUIDMixin, TimestampMixin):
     asset_type: Mapped[AssetType] = mapped_column(Enum(AssetType, name="asset_type"), nullable=False)
     file_path: Mapped[str] = mapped_column(String(500), nullable=False)
     file_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    negative_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    seed: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    generation_params: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    variation_of: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("assets.id"), nullable=True)
+    batch_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    selected: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    favorite: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    locked: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    asset_ref: Mapped[str | None] = mapped_column(String(100), nullable=True)
     status: Mapped[ProjectStatus] = mapped_column(
         Enum(ProjectStatus, name="project_status"), default=ProjectStatus.PENDING, nullable=False
     )
@@ -148,6 +160,17 @@ class Asset(Base, UUIDMixin, TimestampMixin):
     project: Mapped["Project"] = relationship("Project", back_populates="assets")
     character: Mapped["Character | None"] = relationship("Character", back_populates="assets")
     scene: Mapped["Scene | None"] = relationship("Scene", back_populates="assets")
+
+
+class GenerationBatch(Base, UUIDMixin):
+    __tablename__ = "generation_batches"
+
+    project_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("projects.id"), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", server_default="pending")
+    total_assets: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    completed_assets: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
 class Voice(Base, UUIDMixin, TimestampMixin):
