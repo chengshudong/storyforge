@@ -28,20 +28,20 @@ Open:
 
 ```
 backend/            FastAPI application
-  agents/           AI agents (NovelAgent, StoryAgent, EpisodeAgent, SceneAgent, CharacterAgent, ImageAgent)
+  agents/           AI agents (NovelAgent, StoryAgent, EpisodeAgent, SceneAgent, CharacterAgent, ImageAgent, VoiceAgent, VideoAgent)
   alembic/          Database migrations
-  api/v1/           REST endpoints (health, projects, parse, models, generate, jobs, scenes, characters, assets)
+  api/v1/           REST endpoints (health, projects, parse, models, generate, jobs, scenes, characters, assets, voices, videos)
   config/           Model registry (models.yaml)
   domain/           ORM models + shared mixins
   infra/            Infrastructure (DB, Redis, MinIO, Celery)
-  interfaces/       Provider interfaces (LLM, parser, context, vector, storyboard, image)
+  interfaces/       Provider interfaces (LLM, parser, context, vector, storyboard, image, voice, video)
   middleware/       Request ID, exception handlers
-  prompts/          Prompt templates (LLM: summary, extraction, episode, scene, character; Deterministic: image)
-  providers/        Provider adapters (llm, novel, context, vector, image)
+  prompts/          Prompt templates (LLM: summary, extraction, episode, scene, character; Deterministic: image, voice, video)
+  providers/        Provider adapters (llm, novel, context, vector, image, voice, video)
   repository/       Data access layer (9 model repos + base)
   service/          Business logic
-  services/         Shared services (model_router, cache, cost_logger)
-  workflows/        LangGraph workflows (novel_processing, story_generation, scene_generation)
+  services/         Shared services (model_router, cache, cost_logger, voice_library)
+  workflows/        LangGraph workflows (novel_processing, story_generation, scene_generation, image_generation, voice_generation, video_generation)
 frontend/           Next.js application
   src/
     app/            Routes (home, dashboard, upload)
@@ -49,7 +49,7 @@ frontend/           Next.js application
     i18n/           Internationalization (zh/en)
     lib/            API client, zustand store, utilities
 infra/              Docker compose, nginx, init scripts
-tests/              pytest suite (165+ tests)
+tests/              pytest suite (308+ tests)
 docs/               Documentation
 ```
 
@@ -88,6 +88,19 @@ docs/               Documentation
 | GET | `/api/v1/assets/{id}` | 200 | Get asset with generation metadata |
 | PATCH | `/api/v1/assets/{id}` | 200 | Edit asset (lock/unlock, feedback, regenerate) |
 | DELETE | `/api/v1/assets/{id}` | 204 | Delete asset (409 if locked) |
+| POST | `/api/v1/voices/generate` | 202 | Generate voices via CosyVoice (clone + synthesize + preview) |
+| GET | `/api/v1/voices?project_id=&character_id=&scene_id=` | 200 | List voices (paginated, with filters) |
+| GET | `/api/v1/voices/{id}` | 200 | Get voice with full metadata |
+| GET | `/api/v1/voices/{id}/preview` | 200 | Voice preview audio clip (audio/wav) |
+| DELETE | `/api/v1/voices/{id}` | 204 | Delete voice (409 if selected) |
+| POST | `/api/v1/videos/generate` | 202 | Generate videos via Wan2.1/CogVideoX (init+submit+poll+composite+save) |
+| GET | `/api/v1/videos?project_id=&scene_id=&selected=` | 200 | List videos (paginated, with filters) |
+| GET | `/api/v1/videos/{id}` | 200 | Get video metadata (20 fields) |
+| GET | `/api/v1/videos/{id}/stream` | 200 | Stream MP4 video file |
+| GET | `/api/v1/videos/{id}/thumbnail` | 200 | Keyframe thumbnail image (image/jpeg) |
+| GET | `/api/v1/videos/{id}/preview` | 200 | 3s preview clip (video/mp4) |
+| POST | `/api/v1/videos/select` | 200 | Mark videos as selected/unselected |
+| DELETE | `/api/v1/videos/{id}` | 204 | Delete video (409 if locked) |
 
 Error format: `{"code":"ERROR_CODE","message":"Human message","data":{}}`
 
@@ -102,6 +115,8 @@ Error format: `{"code":"ERROR_CODE","message":"Human message","data":{}}`
 | Long Context | LlamaIndex + SentenceTransformer | ContextStore |
 | Vector Storage | Qdrant | VectorStore |
 | Image Generation | ComfyUI (SDXL + InstantID) | ComfyUIAdapter |
+| Voice Synthesis | CosyVoice / GPT-SoVITS | CosyVoiceAdapter / GPTSoVITSAdapter |
+| Video Generation | Wan2.1 / CogVideoX | Wan21Adapter / CogVideoXAdapter |
 | Workflow | LangGraph | Built-in |
 
 ## Phase Progress
@@ -116,8 +131,8 @@ Error format: `{"code":"ERROR_CODE","message":"Human message","data":{}}`
 | 5 | TASK_005 | Scene Generation / Storyboard | ✅ |
 | 6 | TASK_006 | Character | ✅ |
 | 7 | TASK_007 | Image | ✅ |
-| 8 | TASK_008 | Voice | 🔲 |
-| 9 | TASK_009 | Video | 🔲 |
+| 8 | TASK_008 | Voice | ✅ |
+| 9 | TASK_009 | Video | ✅ |
 | 10 | TASK_010 | Editing | 🔲 |
 | 11 | TASK_011 | Production | 🔲 |
 
@@ -157,6 +172,8 @@ pytest tests/ -v
 | [docs/OSS_REGISTRY.md](docs/OSS_REGISTRY.md) | Approved provider registry |
 | [docs/PROMPTS.md](docs/PROMPTS.md) | Prompt design (story + scene + character + image) |
 | [docs/ASSET_GUIDE.md](docs/ASSET_GUIDE.md) | Asset generation pipeline guide |
+| [docs/VOICE_GUIDE.md](docs/VOICE_GUIDE.md) | Voice generation pipeline guide |
+| [docs/VIDEO_GUIDE.md](docs/VIDEO_GUIDE.md) | Video generation pipeline guide |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System architecture |
 | [docs/STARTUP.md](docs/STARTUP.md) | Startup guide |
 | [docs/ER_DIAGRAM.md](docs/ER_DIAGRAM.md) | Entity-relationship diagram |

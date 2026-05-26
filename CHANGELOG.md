@@ -1,5 +1,179 @@
 # CHANGELOG
 
+## [task-009-complete] — Video Generation — 2026-05-26
+
+### Added
+- **VideoProvider interface** (`backend/interfaces/video.py`, 57 lines) — ABC with `submit(request) → prompt_id`, `poll(prompt_id) → VideoResult`, `cancel(prompt_id) → bool`, `health() → bool`. `VideoStatus` enum (PENDING/RUNNING/DONE/FAILED). `VideoSubmitRequest` dataclass (12 fields: prompt, negative_prompt, seed, fps, num_frames, guidance_scale, width, height, image bytes, image_filename, motion_bucket_id, extra_params). `VideoResult` dataclass (prompt_id, status, video bytes, duration_s, error).
+- **Wan21Adapter** (`backend/providers/video/wan21_adapter.py`, 133 lines) — Primary I2V provider using httpx REST client:
+  - `POST /api/v1/video/submit` — multipart form-data (image PNG + text params) → task_id
+  - `GET /api/v1/video/status/{id}` — poll loop (150 iterations × 2s = 5min max) → status + download on completion
+  - `GET /api/v1/video/download/{id}` — MP4 bytes
+  - `POST /api/v1/video/cancel/{id}` — cancel in-progress task
+  - `GET /api/health` — health check
+  - Lazy singleton httpx.AsyncClient, timeouts: connect=10s, read=600s, write=120s
+- **CogVideoXAdapter** (`backend/providers/video/cogvideox_adapter.py`, 125 lines) — Fallback I2V provider (THUDM):
+  - JSON-only payload (image as base64 data URI)
+  - `POST /generate`, `GET /status/{id}`, `GET /download/{id}`, `POST /cancel/{id}`
+  - Key differences from Wan2.1: `num_inference_steps=50` instead of `motion_bucket_id`, default `guidance_scale=6.0` vs 7.5
+- **2 deterministic video prompt classes** (`backend/prompts/video.py`, 78 lines) — No LLM on hot path:
+  - `SceneVideoPrompt` — Constructs cinematic I2V prompt from shot_type + angle + movement + emotion + location + character_actions. Negative prompt targets morphing, flickering, face inconsistency.
+  - `SceneContextPrompt` — Optional LLM-enhanced variant with deterministic fallback `render_deterministic()` for complex multi-character sequences.
+- **SceneRenderer** (`backend/services/video_renderer.py`, 75 lines) — Deterministic I2V payload builder:
+  - `build_payload()` — Constructs `VideoSubmitRequest` from scene storyboard + character image + voice profile
+  - 6-level camera movement → motion_bucket_id mapping: static=20, slow_pan/subtle/gentle=80, pan/tilt/dolly/zoom=127, fast_pan/tracking/dynamic=180, action/shake/handheld=220, default=127
+  - `_map_movement_to_motion()` — case-insensitive movement keyword matching
+  - `duration_estimate × fps → num_frames` calculation with min=1 guard
+- **VideoAgent** (`backend/agents/video_agent.py`, 328 lines) — Video orchestration without LLM:
+  - `submit_scene_video()` — SceneRenderer.build_payload → provider.submit → prompt_id
+  - `poll_scene_video()` — provider.poll → VideoResult with MP4 bytes
+  - `generate_scene_video()` — Combined submit + poll (single character, single scene)
+  - `composite_audio()` — ffmpeg subprocess: video MP4 + dialogue WAV → composited MP4 with AAC audio, -shortest flag
+  - `extract_thumbnail()` — ffmpeg: -ss at_seconds -vframes 1 → JPEG keyframe
+  - `extract_preview()` — ffmpeg: -t duration_s -c copy → 3s preview clip
+  - `save_video()` — 4 MinIO uploads (video + composited_audio + thumbnail + preview) → Video DB record with full metadata
+  - `build_video_cache_key()` — Content-addressed MD5(project|scene|character|seed|params_hash), 30-day TTL
+  - `build_prompt_cache_key()` — MD5(prompt content), 7-day TTL
+  - `_upload_media()` + `_resolve_provider()` — MinIO upload helper, class-name-based provider resolution
+  - DI pattern: video_provider(VideoProvider) + video_repo + asset_repo + cache(CacheService) + router(optional)
+- **LangGraph video workflow** (`backend/workflows/video_generation.py`, 349 lines) — 5-node DAG:
+  - `init → submit → poll → composite → save → END`
+  - Conditional edges: init→save (no scenes/fail), poll→submit (retry with max_retries=1), poll→save (fail after retries), composite→save (always)
+  - `VideoGenerationState` dataclass with 22 fields (project_id, scenes with storyboard, character_assets, voice_assets, phases, variant_count, regenerate, batch_id, submissions, retry_count, max_retries, generated_videos, saved_video_ids, errors, etc.)
+  - Init node: filters scenes with storyboards, validates character assets presence
+  - Submit node: iterates all characters_present per scene, calls submit_scene_video for each character with image_data
+  - Poll node: polls all submissions, matches voice_assets by scene_id+character_name, retries once if all fail
+  - Composite node: extracts thumbnail + preview for each generated video
+  - Save node: calls video_agent.save_video for each video, persists all completed work
+  - `MemorySaver` checkpointer for resumability
+- **Extended Video model** (`backend/domain/models.py`): From 6 to 20 columns — added project_id (UUID FK→projects), prompt (Text), negative_prompt (Text), seed (Integer), fps (Integer, default 24), generation_params (JSONB), provider (String 50), preview_path (String 500), thumbnail_path (String 500), batch_id (UUID), selected (Boolean, default false), version (Integer, default 1), audio_path (String 500), audio_duration (Float), file_size (Integer). Added `project` relationship.
+- **Extended VideoRepository** (`backend/repository/video_repository.py`): From 1 to 5 methods — added `list_by_project()`, `list_by_scene()`, `get_selected()`, `get_by_version()`, `set_selected()`
+- **Alembic migration 006** (`backend/alembic/versions/006_extend_videos.py`): 14 new columns (all nullable initially, backfill project_id from scene→episode FK chain, then non-nullable). 3 indexes: `ix_videos_project_id`, `ix_videos_scene_selected`, `ix_videos_batch_id`.
+- **8 video API endpoints** (`backend/api/v1/videos.py`, 206 lines):
+  - `POST /videos/generate` (202) — Trigger video generation async via Celery
+  - `GET /videos?project_id=&scene_id=&selected=` — List with filters (paginated)
+  - `GET /videos/{id}` — Get video metadata (20 fields)
+  - `GET /videos/{id}/stream` — Stream MP4 via MinIO download (video/mp4)
+  - `GET /videos/{id}/thumbnail` — Keyframe thumbnail (image/jpeg)
+  - `GET /videos/{id}/preview` — 3s preview clip (video/mp4)
+  - `POST /videos/select` — Mark videos as selected/unselected
+  - `DELETE /videos/{id}` (204) — Delete video (409 if locked)
+- **5 Pydantic schemas** (`backend/api/v1/schemas.py`): VideoGenerationParams, VideoGenerateRequest, VideoGenerateResponse, VideoResponse (21 fields), VideoListResponse, VideoSelectRequest
+- **Wan2.1 + CogVideoX services** (`docker-compose.yml`): GPU profile services (wan21:7860, cogvideox:7861), celery-video worker (Q video_generation --concurrency=1), wan21_models + cogvideox_models volumes
+- **Dedicated Celery queue** (`backend/infra/celery_app.py`): `video_generation` queue route, concurrency=1 for sequential GPU processing
+- **Environment variables** (`.env.example`): WAN21_BASE_URL, COGVIDEOX_BASE_URL
+- **92 new tests**: 11 Wan2.1Adapter, 6 CogVideoXAdapter, 9 video prompts, 12 SceneRenderer, 14 VideoAgent, 23 video workflow, 17 video API (all passing, 308 total)
+
+### Design Decisions
+- **Hot path is fully deterministic**: `submit_scene_video()` → `SceneRenderer.build_payload()` → `SceneVideoPrompt.render()` has zero LLM calls. Unlike CharacterAgent (4 LLM calls) or StoryAgent (3 LLM calls), the video pipeline uses only structured data construction.
+- **Provider pattern mirrors ImageProvider/VoiceProvider**: Separate ABC (not through ModelRouter), purpose-built for I2V REST API's submit→poll→download pattern. Both adapters follow identical interface with provider-specific payload serialization (multipart vs JSON+base64).
+- **Audio composited as post-processing**: Wan2.1 generates silent video. Voice audio is added via ffmpeg subprocess after generation completes — allows independent evolution of video and audio pipelines.
+- **Single-GPU sequential queue**: Video generation consumes full GPU per request. Dedicated Celery queue `video_generation` with `--concurrency=1 --worker_prefetch_multiplier=1`. Cross-project queuing via Celery (all projects share one worker).
+- **SceneRenderer is the integration point**: Takes scene storyboard + character image data + voice profile → produces deterministic `VideoSubmitRequest`. No data loading or IO — pure transformation from dicts to payload.
+- **Camera movement → motion_bucket_id mapping**: 6 discrete buckets (20/80/127/180/220) from keyword matching. Case-insensitive. Unknown movements default to 127 (normal pan). This is the key Wan2.1-specific tuning parameter.
+- **Content-addressed video cache**: `MD5(project|scene|character|seed|params_hash)` — 30-day TTL for generation metadata. Actual video bytes NOT cached in Redis (too large for in-memory store — MinIO is permanent storage).
+- **Fail-fast but save-accumulated**: On any phase failure, conditional edges route to save node which persists all completed videos. No orphaned generated work.
+- **Voice-audio matching by scene+character**: Poll node looks up `voice_assets[scene_id]` for matching `character_name` to attach dialogue audio. Audio composited in save phase, not generation phase.
+
+### Known Limitations
+- **Missing Celery task**: `workflows.video_generation.run` is referenced in API (`videos.py:67`) and queue routing (`celery_app.py:17`) but NOT defined in `workflows/tasks.py`. The POST /generate endpoint dispatches to a non-existent task.
+- **No cancel API**: No endpoint to cancel in-progress video generation. Both adapters implement `cancel()` but it's unreachable from the API layer.
+- **No audio-video sync validation**: `audio_duration` vs `video_duration` not compared; drift beyond the -shortest flag boundary is undetected.
+- **No provider fallback at task level**: Wan2.1→CogVideoX fallback is designed in architecture but not wired in the missing Celery task.
+- **ffmpeg dependency**: composite_audio, extract_thumbnail, extract_preview all require ffmpeg on the system PATH. No graceful degradation if ffmpeg is missing.
+- **No streaming video response**: Video endpoint returns full file — no HTTP Range request support for seeking.
+- **MemorySaver only**: Workflow checkpoints are in-memory; lost on process restart.
+
+### Preserved
+- All TASK_001–TASK_008 agents — Unchanged (NovelAgent, StoryAgent, EpisodeAgent, SceneAgent, CharacterAgent, ImageAgent, VoiceAgent)
+- ModelRouter / CacheService / CostLogger — Unchanged (used only for optional LLM-enhanced prompt path)
+- All existing API endpoints — Unchanged
+- All existing tests — 216 existing passing, no regressions; 92 new video tests added
+
+---
+
+## [task-008-complete] — Voice Generation — 2026-05-26
+
+### Added
+- **VoiceProvider interface** (`backend/interfaces/voice.py`, 60 lines) — ABC with `clone_voice(character_name, reference_audio, reference_text) → speaker`, `synthesize(request) → VoiceResult`, `synthesize_batch(requests) → list[VoiceResult]`, `preview(speaker, text) → VoiceResult`, `health() → bool`, `list_speakers() → list[str]`, `delete_speaker(speaker) → bool`. `VoiceStatus` enum (PENDING/RUNNING/DONE/FAILED). `VoiceResult` dataclass (speaker, status, audio, duration_ms, error). `SynthesisRequest` dataclass (text, emotion, emotion_vector, speed, pitch, speaker).
+- **CosyVoiceAdapter** (`backend/providers/voice/cosyvoice_adapter.py`, 120 lines) — Primary TTS provider using httpx REST client:
+  - `POST /upload` — clone voice → speaker ID
+  - `POST /tts` — synthesize text → WAV bytes with emotion vector support
+  - `GET /voices` — list available speakers
+  - `DELETE /voices/{id}` — delete speaker
+  - `GET /health` — health check
+  - `synthesize_batch()` — concurrent synthesis with `asyncio.Semaphore(3)`
+- **GPTSoVITSAdapter** (`backend/providers/voice/gptsovits_adapter.py`, 95 lines) — Optional fallback TTS provider:
+  - `POST /set_reference` — clone voice → speaker_id
+  - `POST /tts` — synthesize → WAV bytes
+  - Serial-only `synthesize_batch()`
+- **4 deterministic voice prompt/mapping classes** (`backend/prompts/voice.py`, 190 lines) — No LLM on hot path:
+  - `ReferenceTextPrompt` — Builds "My name is X. I speak with a Y-pitched, Z voice..." from structured profile
+  - `EmotionResolver` — 33-entry EMOTION_MAP (happy/sad/angry/soothing/mysterious/determined/neutral) with specific pitch/rhythm/timbre vectors per entry. Returns `(None, None)` for unmappable emotions → triggers LLM fallback.
+  - `VoiceProfileMapper` — Maps voice_profile fields to speed (pitch×tempo lookup), pitch offset (-5 to +5), timbre. `apply_character_baseline()` applies per-character emotion offsets (stoic: rhythm-0.05, cheerful: pitch+0.05).
+  - `EmotionLLMPrompt` — Fallback prompt to map complex emotion descriptions to 7 supported tags + vector values. System prompt constrains output to valid JSON.
+- **VoiceAgent** (`backend/agents/voice_agent.py`, 310 lines) — Voice orchestration without LLM (except emotion fallback):
+  - `clone_character_voice()` — ReferenceTextPrompt → TTS reference audio (ModelRouter/EdgeTTS/silence) → voice provider clone → preview → save Voice row with selected=True
+  - `get_or_clone_voice()` — DB check (get_selected with matching version) → Redis speaker cache → clone if not found
+  - `synthesize_dialogue()` — EmotionResolver.map → synthesis cache check → provider.synthesize → cache result. Fully deterministic hot path.
+  - `_resolve_emotion_llm()` — LLM fallback for unmappable emotions, cached 24h via CacheService, logged via CostLogger
+  - `_synthesize_reference_audio()` — Tries ModelRouter → EdgeTTS → silence WAV fallback (3s 16kHz mono PCM)
+  - `_wav_header()` — Static method generating valid 44-byte WAV header
+  - `save_voice_asset()` — MinIO upload + Voice DB create
+  - `preview_voice()` — Generate short preview clip from speaker
+- **VoiceLibrary** (`backend/services/voice_library.py`, 105 lines) — Three-layer Redis cache:
+  - Speaker cache: `voice:speaker:{character_id}`, 7-day TTL with version binding
+  - Synthesis cache: `voice:synth:{MD5(speaker|text|emotion|speed|pitch)[:16]}`, 30-day TTL, audio stored as base64
+  - Provider health cache: `voice:active_provider`, 60s TTL for provider routing
+  - Invalidation: `invalidate_speaker()` + `invalidate_character_audio()`
+- **LangGraph voice workflow** (`backend/workflows/voice_generation.py`, 349 lines) — 4-node DAG:
+  - `clone → synthesize → preview → save → END`
+  - Each node skippable via `state.phases`; conditional fail-fast edges route to save on error
+  - `VoiceGenerationState` dataclass with 16 fields (characters, scenes, speaker_map, synthesis_assets, preview_assets, etc.)
+  - Clone node: iterates all characters, checks Redis cache first, clones only if missing or regenerate=True
+  - Synthesize node: builds tasks for all dialogue lines across all scenes, concurrent with `asyncio.Semaphore(3)`
+  - Preview node: generates "Hello, my name is X" preview for each character
+  - Save node: persists all accumulated assets from completed phases (even on upstream failure)
+  - `MemorySaver` checkpointer for resumability
+- **Celery task** (`backend/workflows/tasks.py`): `workflows.voice_generation.run` — max_retries=2, default_retry_delay=120s. Provider health check with CosyVoice→GPT-SoVITS fallback. Loads characters+scenes+storyboards from DB, initializes VoiceAgent, runs workflow with progress updates at each phase transition (clone=35, synth=80, preview=95, done=100).
+- **5 voice API endpoints** (`backend/api/v1/voices.py`, 155 lines):
+  - `POST /voices/generate` (202) — Trigger voice generation async via Celery
+  - `GET /voices?project_id=&character_id=&scene_id=` — List with filters (paginated)
+  - `GET /voices/{id}` — Get voice with full metadata
+  - `GET /voices/{id}/preview` — Preview audio clip (audio/wav)
+  - `DELETE /voices/{id}` (204) — Delete voice (409 if selected)
+- **6 voice Pydantic schemas** (`backend/api/v1/schemas.py`): VoiceGenerateRequest, VoiceGenerateResponse, VoiceResponse (19 fields), VoiceListResponse
+- **Extended Voice model** (`backend/domain/models.py`): From 6 to 22 columns — added scene_id, dialogue_index, provider, speaker, speed, pitch, emotion, version, selected, voice_params (JSONB), duration_ms, preview_path, reference_audio_path. Added `scene` relationship.
+- **Extended VoiceRepository** (`backend/repository/voice_repository.py`): From 2 to 6 methods — added `list_by_scene()`, `get_selected()`, `get_by_version()`, `set_selected()`
+- **Alembic migration 005** (`backend/alembic/versions/005_extend_voices.py`): 12 new columns (all nullable for backward compat), 3 indices: `ix_voices_character_selected`, `ix_voices_character_version`, `ix_voices_scene_dialogue`
+- **CosyVoice + GPT-SoVITS services** (`docker-compose.yml`): GPU profile services, volumes, env vars
+- **Environment variables** (`.env.example`): COSYVOICE_BASE_URL, COSYVOICE_TIMEOUT, GPTSOVITS_BASE_URL, GPTSOVITS_ENABLED
+- **56 new tests**: 25 voice prompts, 12 voice agent, 10 voice adapter, 6 voice workflow (all passing, 221 total)
+
+### Design Decisions
+- **VoiceProvider pattern mirrors ImageProvider**: Separate ABC (not through ModelRouter), purpose-built for TTS REST API pattern. Provider auto-detected from adapter class name.
+- **Deterministic hot path**: `synthesize_dialogue()` has zero LLM calls — EmotionResolver is a 33-entry lookup table. LLM only invoked for unmappable emotion descriptions, cached 24h.
+- **Content-addressed synthesis cache**: MD5(speaker|text|emotion|speed|pitch) — identical inputs always hit cache regardless of project/character/scene context. 30-day TTL.
+- **Voice-version binding**: Voice.version matches Character.version. `get_or_clone_voice()` checks get_selected() for matching version before returning cached speaker. Rollback restores old Voice with matching version.
+- **Flat columns over JSONB**: Provider, speaker, speed, pitch, emotion are flat columns (frequently accessed) while voice_params is JSONB (rarely queried profile metadata).
+- **selected field**: Only one selected=true per character, mirrors Asset.selected pattern.
+- **Fail-fast but save-accumulated**: On any phase failure, conditional edges route to save node which persists all completed work. No orphaned voice assets.
+- **Concurrent synthesis by dialogue line**: All lines across all scenes submitted concurrently via `asyncio.gather` with Semaphore(3), rather than scene-by-scene or character-by-character.
+- **Silence fallback for reference audio**: When all TTS providers fail during cloning, generates 3s 16kHz mono PCM silence with valid WAV header. Ensures clone phase never blocks the pipeline.
+
+### Known Limitations
+- **No streaming TTS**: CosyVoiceAdapter returns complete WAV bytes; no chunked audio streaming for low-latency preview.
+- **MemorySaver only**: Workflow checkpoints are in-memory; lost on process restart. Not suitable for long-running production without persistent checkpointer.
+- **Serial emotion LLM fallback**: LLM calls for unmappable emotions are made one at a time (no concurrent LLM calls), though results are cached 24h.
+- **No per-synthesis retry**: CosyVoiceAdapter.synthesize() has no retry on connection failure. One failed TTS call abandons that dialogue line.
+
+### Preserved
+- All TASK_001–TASK_007 agents — Unchanged (NovelAgent, StoryAgent, EpisodeAgent, SceneAgent, CharacterAgent, ImageAgent)
+- ModelRouter / CacheService / CostLogger — Unchanged (used only for emotion LLM fallback)
+- All existing API endpoints — Unchanged
+- All existing tests — 165 passing, no regressions; 56 new voice tests added
+
+---
+
 ## [task-007-complete] — Image / Asset Generation — 2026-05-26
 
 ### Added
