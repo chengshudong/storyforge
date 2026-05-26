@@ -59,7 +59,13 @@
       "Bash(findstr \":8003\\\\|:8000\")",
       "Bash(findstr \"LISTENING\")",
       "Bash(findstr \":800\")",
-      "Bash(findstr \":8003\")"
+      "Bash(findstr \":8003\")",
+      "Bash(git tag *)",
+      "Bash(ls -la *.md)",
+      "Bash(ls -la CHANGELOG*)",
+      "Bash(ls -la README*)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }
