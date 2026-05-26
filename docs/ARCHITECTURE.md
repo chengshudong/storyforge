@@ -68,7 +68,7 @@ Novel Upload
   → Parse (NovelAgent)
   → Story Summary (StoryAgent)
   → Episode Plan (EpisodeAgent)
-  → Scenes (SceneAgent)
+  → Scene Storyboard (SceneAgent)
   → Characters (CharacterAgent)
   → Images (ImageAgent)
   → Voice (VoiceAgent)
@@ -76,6 +76,25 @@ Novel Upload
   → Editing (ExportAgent)
   → MP4 Export
 ```
+
+## Scene Generation Pipeline
+
+```
+Episode → Split → N×Storyboard → Validate → Save (JSONB)
+              ↓         ↓            ↓
+           SceneBeat  Camera      Continuity
+           Characters  Emotion     Issues→WARN
+           Duration   Dialogue    (non-blocking)
+                      Props
+                      AssetRefs
+```
+
+- **Split**: 1 LLM call — episode summary → numbered scene beats with characters and duration
+- **Storyboard**: N concurrent LLM calls (semaphore=3) — each beat → full cinematography
+- **Validate**: 1 LLM call — checks character continuity, location motivation, time flow, emotional arc, prop consistency
+- **Save**: SceneRepository.create() × N — stores storyboard as JSONB column
+
+All LLM calls routed through ModelRouter with timeout (60s), retry (3×), fallback chain, and content-addressed Redis caching.
 
 ## Services
 

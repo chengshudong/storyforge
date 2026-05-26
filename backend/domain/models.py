@@ -3,6 +3,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import Enum, Float, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import Uuid
 
@@ -68,6 +69,7 @@ class Scene(Base, UUIDMixin, TimestampMixin):
     title: Mapped[str | None] = mapped_column(String(255), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     dialogue: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    storyboard: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     status: Mapped[ProjectStatus] = mapped_column(
         Enum(ProjectStatus, name="project_status"), default=ProjectStatus.PENDING, nullable=False
     )

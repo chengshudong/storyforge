@@ -98,3 +98,56 @@ class EpisodeListResponse(BaseModel):
     total: int
     offset: int
     limit: int
+
+
+class SceneStoryboardSchema(BaseModel):
+    camera: str | None = None
+    duration: int | None = None
+    emotion: str | None = None
+    location: str | None = None
+    props: list[str] = []
+    transition: str | None = None
+    asset_refs: list[str] = []
+    character_actions: dict[str, str] = {}
+    characters_present: list[str] = []
+    locked: bool = False
+
+
+class SceneResponse(BaseModel):
+    id: uuid.UUID
+    episode_id: uuid.UUID
+    scene_number: int
+    title: str | None = None
+    description: str | None = None
+    dialogue: list | None = None
+    storyboard: SceneStoryboardSchema | None = None
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class SceneListResponse(BaseModel):
+    items: list[SceneResponse]
+    total: int
+    offset: int
+    limit: int
+
+
+class SceneGenerateRequest(BaseModel):
+    regenerate: bool = False
+
+
+class SceneGenerateResponse(BaseModel):
+    job_id: uuid.UUID
+    status: str
+    message: str
+
+
+class SceneEditRequest(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    dialogue: list | None = None
+    storyboard: SceneStoryboardSchema | None = None
+    feedback: str | None = None

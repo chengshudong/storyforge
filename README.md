@@ -28,15 +28,20 @@ Open:
 
 ```
 backend/            FastAPI application
+  agents/           AI agents (NovelAgent, StoryAgent, EpisodeAgent, SceneAgent)
   alembic/          Database migrations
-  api/v1/           REST endpoints (health, projects, jobs)
+  api/v1/           REST endpoints (health, projects, parse, models, generate, jobs, scenes)
+  config/           Model registry (models.yaml)
   domain/           ORM models + shared mixins
   infra/            Infrastructure (DB, Redis, MinIO, Celery)
+  interfaces/       Provider interfaces (LLM, parser, context, vector, storyboard)
   middleware/       Request ID, exception handlers
-  prompts/          LLM prompt templates
-  repository/       Data access layer (8 model repos + base)
+  prompts/          LLM prompt templates (summary, extraction, episode, scene)
+  providers/        Provider adapters (llm, novel, context, vector)
+  repository/       Data access layer (9 model repos + base)
   service/          Business logic
-  workflows/        Workflow state (ProjectState)
+  services/         Shared services (model_router, cache, cost_logger)
+  workflows/        LangGraph workflows (novel_processing, story_generation, scene_generation)
 frontend/           Next.js application
   src/
     app/            Routes (home, dashboard, upload)
@@ -44,7 +49,7 @@ frontend/           Next.js application
     i18n/           Internationalization (zh/en)
     lib/            API client, zustand store, utilities
 infra/              Docker compose, nginx, init scripts
-tests/              pytest suite (27 tests)
+tests/              pytest suite (84+ tests)
 docs/               Documentation
 ```
 
@@ -57,16 +62,50 @@ docs/               Documentation
 | POST | `/api/v1/projects` | 201 | Create project |
 | GET | `/api/v1/projects` | 200 | List projects (paginated) |
 | GET | `/api/v1/projects/{id}` | 200 | Get project by ID |
+| POST | `/api/v1/projects/parse` | 201 | Upload and parse novel (TXT/DOCX/EPUB) |
+| POST | `/api/v1/generate/story` | 202 | Generate story summary + episode plan |
+| GET | `/api/v1/episodes` | 200 | List episodes for a project |
+| GET | `/api/v1/episodes/{id}` | 200 | Get episode detail |
+| POST | `/api/v1/episodes/{id}/scenes` | 202 | Generate scene storyboards for episode |
+| GET | `/api/v1/scenes?episode_id=` | 200 | List scenes (paginated, by episode) |
+| GET | `/api/v1/scenes/{id}` | 200 | Get scene with storyboard detail |
+| PATCH | `/api/v1/scenes/{id}` | 200 | Edit scene or regenerate via LLM feedback |
+| GET | `/api/v1/models` | 200 | List available models and tasks |
+| GET | `/api/v1/models/health` | 200 | Provider health status |
+| POST | `/api/v1/models/test` | 200 | Test model generation |
 | GET | `/api/v1/jobs` | 200 | List jobs (?project_id= filter) |
 | GET | `/api/v1/jobs/{id}` | 200 | Get job by ID |
 
 Error format: `{"code":"ERROR_CODE","message":"Human message","data":{}}`
 
-## Data Layer
+## Provider Stack
 
-10 PostgreSQL tables with native enum types. See [docs/ER_DIAGRAM.md](docs/ER_DIAGRAM.md) for the ER diagram and [docs/MIGRATION.md](docs/MIGRATION.md) for migration guide.
+| Capability | Provider | Adapter |
+|------------|----------|---------|
+| LLM Primary | DeepSeek (deepseek-chat) | OpenAI-compatible |
+| LLM Fallback | OpenAI → Anthropic → Gemini → OpenRouter → Local | Multi-adapter |
+| Embedding | sentence-transformers (all-MiniLM-L6-v2, 384-dim) | Local |
+| Novel Parsing | Unstructured | NovelParser |
+| Long Context | LlamaIndex + SentenceTransformer | ContextStore |
+| Vector Storage | Qdrant | VectorStore |
+| Workflow | LangGraph | Built-in |
 
-Models: Project → Episode → Scene → Video; Project → Character → Voice; Project → Asset; Project → Job → Log
+## Phase Progress
+
+| Phase | Task | Description | Status |
+|-------|------|-------------|--------|
+| 1 | TASK_001 | Infrastructure | ✅ |
+| 2 | TASK_002 | Data Layer | ✅ |
+| 3 | TASK_003 | Novel Parsing | ✅ |
+| 3A | TASK_003A | Model Gateway | ✅ |
+| 4 | TASK_004 | Story Generation | ✅ |
+| 5 | TASK_005 | Scene Generation / Storyboard | ✅ |
+| 6 | TASK_006 | Character | 🔲 |
+| 7 | TASK_007 | Image | 🔲 |
+| 8 | TASK_008 | Voice | 🔲 |
+| 9 | TASK_009 | Video | 🔲 |
+| 10 | TASK_010 | Editing | 🔲 |
+| 11 | TASK_011 | Production | 🔲 |
 
 ## Development
 
@@ -99,12 +138,14 @@ pytest tests/ -v
 |----------|-------------|
 | [docs/MASTER_PROMPT.md](docs/MASTER_PROMPT.md) | Vision, architecture, product flow |
 | [docs/RULES.md](docs/RULES.md) | Engineering rules (mandatory) |
+| [docs/MODEL_POLICY.md](docs/MODEL_POLICY.md) | Model routing, timeout, retry, cache, cost policies |
+| [docs/INTEGRATION_POLICY.md](docs/INTEGRATION_POLICY.md) | OSS integration policy |
+| [docs/OSS_REGISTRY.md](docs/OSS_REGISTRY.md) | Approved provider registry |
+| [docs/PROMPTS.md](docs/PROMPTS.md) | Prompt design (story + scene generation) |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System architecture |
 | [docs/STARTUP.md](docs/STARTUP.md) | Startup guide |
 | [docs/ER_DIAGRAM.md](docs/ER_DIAGRAM.md) | Entity-relationship diagram |
 | [docs/MIGRATION.md](docs/MIGRATION.md) | Database migration guide |
-| [docs/INTEGRATION_POLICY.md](docs/INTEGRATION_POLICY.md) | OSS integration policy |
-| [docs/OSS_REGISTRY.md](docs/OSS_REGISTRY.md) | Approved provider registry |
 | [backend/DATA_LAYER.md](backend/DATA_LAYER.md) | Data layer internals |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
 
