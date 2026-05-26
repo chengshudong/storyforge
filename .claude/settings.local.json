@@ -42,7 +42,24 @@
       "Bash(docker exec *)",
       "Bash(python3 -m json.tool)",
       "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(json.dumps\\({'paths': list\\(d.get\\('paths',{}\\).keys\\(\\)\\), 'title': d.get\\('info',{}\\).get\\('title'\\), 'version': d.get\\('info',{}\\).get\\('version'\\)}, indent=2\\)\\)\")",
-      "Bash(python3 -c ' *)"
+      "Bash(python3 -c ' *)",
+      "Bash(taskkill *)",
+      "Bash(powershell *)",
+      "Bash(nohup python -m uvicorn main:app --host 0.0.0.0 --port 8000)",
+      "Bash(echo \"chapter 1: young hero trains on the mountain peak\")",
+      "Bash(echo \"chapter 2: heroine opens an inn by the river\")",
+      "Bash(echo \"chapter 3: hero travels to the capital city\")",
+      "Bash(netstat -ano)",
+      "Bash(cmd *)",
+      "Bash(powershell.exe *)",
+      "Bash(python -m uvicorn main:app --host 0.0.0.0 --port 8001)",
+      "Bash(findstr \":8000\")",
+      "Bash(findstr \":8003\\\\|:6333\\\\|:8000\")",
+      "Bash(docker run *)",
+      "Bash(findstr \":8003\\\\|:8000\")",
+      "Bash(findstr \"LISTENING\")",
+      "Bash(findstr \":800\")",
+      "Bash(findstr \":8003\")"
     ]
   }
 }

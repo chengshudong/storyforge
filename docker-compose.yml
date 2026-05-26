@@ -1,4 +1,3 @@
-version: "3.9"
 
 services:
   postgres:
@@ -53,7 +52,7 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:6333/healthz"]
       interval: 5s
       timeout: 5s
       retries: 5

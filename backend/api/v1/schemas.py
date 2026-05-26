@@ -54,3 +54,47 @@ class JobListResponse(BaseModel):
     total: int
     offset: int
     limit: int
+
+
+class ParseUploadResponse(BaseModel):
+    project_id: uuid.UUID
+    title: str
+    char_count: int
+    chunk_count: int
+    entities: dict
+    collection: str
+
+    model_config = {"from_attributes": True}
+
+
+class StoryGenerateRequest(BaseModel):
+    project_id: uuid.UUID
+    regenerate: bool = False
+
+
+class StoryGenerateResponse(BaseModel):
+    job_id: uuid.UUID
+    status: str
+    message: str
+
+
+class EpisodeResponse(BaseModel):
+    id: uuid.UUID
+    episode_number: int
+    title: str
+    summary: str | None = None
+    status: str
+    chapter_range: list[int] | None = None
+    cliffhanger: str | None = None
+    key_scenes: list[str] | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class EpisodeListResponse(BaseModel):
+    items: list[EpisodeResponse]
+    total: int
+    offset: int
+    limit: int

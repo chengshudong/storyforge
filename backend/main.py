@@ -31,10 +31,18 @@ def create_app() -> FastAPI:
     from api.v1.health import router as health_router
     from api.v1.projects import router as projects_router
     from api.v1.jobs import router as jobs_router
+    from api.v1.parse import router as parse_router
+    from api.v1.models import router as models_router
+    from api.v1.generate import router as generate_router
+    from api.v1.generate import episode_router
 
     app.include_router(health_router, prefix="/api/v1")
+    app.include_router(parse_router, prefix="/api/v1")
     app.include_router(projects_router, prefix="/api/v1")
     app.include_router(jobs_router, prefix="/api/v1")
+    app.include_router(models_router, prefix="/api/v1")
+    app.include_router(generate_router, prefix="/api/v1")
+    app.include_router(episode_router, prefix="/api/v1")
 
     @app.get("/health", tags=["health"])
     async def root_health():
