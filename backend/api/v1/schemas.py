@@ -311,3 +311,116 @@ class AssetEditRequest(BaseModel):
     locked: bool | None = None
     feedback: str | None = None
     regenerate: bool = False
+
+
+# ── Voice schemas (TASK_008) ────────────────────────────────────────────────
+
+
+class VoiceGenerateRequest(BaseModel):
+    project_id: uuid.UUID
+    regenerate: bool = False
+    phases: list[str] = ["clone", "synthesize", "preview"]
+
+
+class VoiceGenerateResponse(BaseModel):
+    job_id: uuid.UUID
+    batch_id: uuid.UUID
+    status: str
+    message: str
+
+
+class VoiceResponse(BaseModel):
+    voice_id: uuid.UUID
+    character_id: uuid.UUID
+    provider: str = ""
+    speaker: str = ""
+    speed: float = 1.0
+    pitch: int = 0
+    emotion: str = "neutral"
+    version: int = 1
+    selected: bool = False
+    file_path: str
+    file_size: int | None = None
+    duration_ms: float | None = None
+    preview_path: str | None = None
+    reference_audio_path: str | None = None
+    scene_id: uuid.UUID | None = None
+    dialogue_index: int | None = None
+    voice_params: dict | None = None
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class VoiceListResponse(BaseModel):
+    items: list[VoiceResponse]
+    total: int
+    offset: int
+    limit: int
+
+
+# ── Video schemas (TASK_009) ────────────────────────────────────────────────
+
+
+class VideoGenerationParams(BaseModel):
+    guidance_scale: float = 7.5
+    width: int = 768
+    height: int = 1152
+    steps: int = 25
+    motion_bucket_id: int = 127
+
+
+class VideoGenerateRequest(BaseModel):
+    project_id: uuid.UUID
+    regenerate: bool = False
+    variant_count: int = 1
+    phases: list[str] = ["init", "submit", "poll", "composite", "save"]
+
+
+class VideoGenerateResponse(BaseModel):
+    job_id: uuid.UUID
+    batch_id: uuid.UUID
+    status: str
+    message: str
+
+
+class VideoResponse(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    scene_id: uuid.UUID
+    file_path: str
+    duration: float | None = None
+    resolution: str | None = None
+    prompt: str | None = None
+    negative_prompt: str | None = None
+    seed: int | None = None
+    fps: int = 24
+    generation_params: dict | None = None
+    provider: str | None = None
+    preview_path: str | None = None
+    thumbnail_path: str | None = None
+    batch_id: uuid.UUID | None = None
+    selected: bool = False
+    version: int = 1
+    audio_path: str | None = None
+    audio_duration: float | None = None
+    file_size: int | None = None
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class VideoListResponse(BaseModel):
+    items: list[VideoResponse]
+    total: int
+    offset: int
+    limit: int
+
+
+class VideoSelectRequest(BaseModel):
+    video_ids: list[uuid.UUID]
+    selected: bool = True

@@ -178,28 +178,58 @@ class Voice(Base, UUIDMixin, TimestampMixin):
 
     project_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("projects.id"), nullable=False)
     character_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("characters.id"), nullable=False)
+    scene_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("scenes.id"), nullable=True)
+    dialogue_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    provider: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    speaker: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    speed: Mapped[float | None] = mapped_column(Float, nullable=True)
+    pitch: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    emotion: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    selected: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    voice_params: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     file_path: Mapped[str] = mapped_column(String(500), nullable=False)
     file_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
     duration: Mapped[float | None] = mapped_column(Float, nullable=True)
+    duration_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    preview_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    reference_audio_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     status: Mapped[ProjectStatus] = mapped_column(
         Enum(ProjectStatus, name="project_status"), default=ProjectStatus.PENDING, nullable=False
     )
 
     project: Mapped["Project"] = relationship("Project", back_populates="voices")
     character: Mapped["Character"] = relationship("Character", back_populates="voices")
+    scene: Mapped["Scene | None"] = relationship("Scene")
 
 
 class Video(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "videos"
 
+    project_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("projects.id"), nullable=False)
     scene_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("scenes.id"), nullable=False)
     file_path: Mapped[str] = mapped_column(String(500), nullable=False)
     duration: Mapped[float | None] = mapped_column(Float, nullable=True)
     resolution: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    negative_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    seed: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    fps: Mapped[int] = mapped_column(Integer, default=24, server_default="24")
+    generation_params: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    provider: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    preview_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    thumbnail_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    batch_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    selected: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    audio_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    audio_duration: Mapped[float | None] = mapped_column(Float, nullable=True)
+    file_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[ProjectStatus] = mapped_column(
         Enum(ProjectStatus, name="project_status"), default=ProjectStatus.PENDING, nullable=False
     )
 
+    project: Mapped["Project"] = relationship("Project")
     scene: Mapped["Scene"] = relationship("Scene", back_populates="videos")
 
 

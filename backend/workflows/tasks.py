@@ -626,3 +626,178 @@ def run_image_generation(self, project_id: str, job_id: str, phases: list[str] |
                 await fail_job(session, uuid.UUID(job_id), str(e))
 
     asyncio.run(_run())
+
+
+@celery_app.task(name="workflows.voice_generation.run", bind=True, max_retries=2, default_retry_delay=120)
+def run_voice_generation(self, project_id: str, job_id: str,
+                         phases: list[str] | None = None,
+                         regenerate: bool = False):
+    """Celery task: run the voice generation workflow for a project.
+
+    Orchestrates CosyVoice voice cloning and dialogue synthesis:
+    clone -> synthesize -> preview -> save.
+
+    Uses ModelRouter only for emotion LLM fallback.
+    Hot synthesis path is deterministic (no LLM calls).
+    """
+    import asyncio
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from infra.config import settings
+    from providers.llm.deepseek import DeepSeekAdapter
+    from providers.llm.openai import OpenAIAdapter
+    from providers.llm.anthropic import AnthropicAdapter
+    from providers.llm.gemini import GeminiAdapter
+    from providers.llm.openrouter import OpenRouterAdapter
+    from providers.llm.local import LocalAdapter
+    from providers.voice.cosyvoice_adapter import CosyVoiceAdapter
+    from providers.voice.gptsovits_adapter import GPTSoVITSAdapter
+    from agents.voice_agent import VoiceAgent
+    from services.voice_library import VoiceLibrary
+    from workflows.voice_generation import build_voice_workflow, VoiceGenerationState
+    from repository.voice_repository import VoiceRepository
+    from repository.character_repository import CharacterRepository
+    from repository.scene_repository import SceneRepository
+    from repository.episode_repository import EpisodeRepository
+    from repository.project_repository import ProjectRepository
+    from services.model_router.router import ModelRouter
+    from services.cache_service import CacheService
+    from infra.queue import complete_job, fail_job, update_job_progress
+
+    async def _run():
+        engine = create_async_engine(settings.database_url)
+        async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+        provider_map = {
+            "deepseek": DeepSeekAdapter(), "openai": OpenAIAdapter(),
+            "anthropic": AnthropicAdapter(), "gemini": GeminiAdapter(),
+            "openrouter": OpenRouterAdapter(), "local": LocalAdapter(),
+        }
+        registry = _load_registry()
+        router = ModelRouter(provider_map, registry)
+        cache = CacheService()
+
+        async with async_session() as session:
+            try:
+                await update_job_progress(session, uuid.UUID(job_id), 5, "Starting voice generation")
+
+                project_repo = ProjectRepository(session)
+                project = await project_repo.get(uuid.UUID(project_id))
+                if project is None:
+                    await fail_job(session, uuid.UUID(job_id), "Project not found")
+                    return
+
+                # Load characters with voice profiles
+                char_repo = CharacterRepository(session)
+                characters = await char_repo.list_by_project(uuid.UUID(project_id))
+                char_data = [
+                    {
+                        "id": str(c.id),
+                        "name": c.name,
+                        "profile": c.profile or {},
+                        "version": c.version or 1,
+                    }
+                    for c in characters
+                ]
+
+                # Load scenes with dialogue
+                scene_repo = SceneRepository(session)
+                ep_repo = EpisodeRepository(session)
+                episodes = await ep_repo.list_by_project(uuid.UUID(project_id))
+                all_scenes: list[dict] = []
+                scene_storyboards: dict[str, dict] = {}
+                for ep in episodes:
+                    ep_scenes = await scene_repo.list_by_episode(ep.id)
+                    for sc in ep_scenes:
+                        scene_dict = {
+                            "id": str(sc.id),
+                            "title": sc.title,
+                            "dialogue": sc.dialogue or [],
+                            "storyboard": sc.storyboard or {},
+                        }
+                        all_scenes.append(scene_dict)
+                        if sc.storyboard:
+                            scene_storyboards[str(sc.id)] = sc.storyboard
+
+                active_phases = phases or ["clone", "synthesize", "preview"]
+
+                await update_job_progress(
+                    session, uuid.UUID(job_id), 10,
+                    f"Loaded {len(char_data)} characters, {len(all_scenes)} scenes. "
+                    f"Phases: {active_phases}",
+                )
+
+                # Initialize voice provider
+                cosyvoice = CosyVoiceAdapter()
+                cosy_healthy = await cosyvoice.health()
+                if cosy_healthy:
+                    voice_provider = cosyvoice
+                else:
+                    logger.warning("CosyVoice unhealthy, checking GPT-SoVITS")
+                    gptsovits = GPTSoVITSAdapter()
+                    if await gptsovits.health():
+                        voice_provider = gptsovits
+                    else:
+                        voice_provider = cosyvoice
+
+                voice_repo = VoiceRepository(session)
+                voice_library = VoiceLibrary(cache)
+                voice_agent = VoiceAgent(voice_provider, voice_repo, voice_library, cache, router)
+
+                workflow = build_voice_workflow(voice_agent)
+
+                initial_state = VoiceGenerationState(
+                    project_id=project_id,
+                    characters=char_data,
+                    scenes=all_scenes,
+                    scene_storyboards=scene_storyboards,
+                    phases=active_phases,
+                    job_id=job_id,
+                    regenerate=regenerate,
+                )
+
+                config = {"configurable": {"thread_id": f"{project_id}_voices"}}
+                await update_job_progress(session, uuid.UUID(job_id), 15, "Running clone phase")
+
+                final_state = None
+                async for event in workflow.astream(initial_state, config):
+                    for node_name, node_output in event.items():
+                        if isinstance(node_output, dict):
+                            status = node_output.get("status", "")
+                            progress_map = {
+                                "clone_done": (35, "Voice cloning complete"),
+                                "clone_skipped": (30, "Clone skipped"),
+                                "synthesize_done": (80, "Dialogue synthesis complete"),
+                                "synthesize_skipped": (70, "Synthesis skipped"),
+                                "preview_done": (95, "Previews generated"),
+                                "preview_skipped": (85, "Preview skipped"),
+                                "done": (100, "All phases complete"),
+                            }
+                            if status in progress_map:
+                                pct, msg = progress_map[status]
+                                await update_job_progress(session, uuid.UUID(job_id), pct, msg)
+                            elif status == "failed":
+                                await fail_job(session, uuid.UUID(job_id),
+                                               node_output.get("error", "Unknown error"))
+                                return
+                            final_state = node_output
+
+                saved = final_state.get("saved_voice_ids", []) if final_state else []
+                speakers = final_state.get("speaker_map", {}) if final_state else {}
+                await complete_job(
+                    session,
+                    uuid.UUID(job_id),
+                    result={
+                        "voices_saved": len(saved),
+                        "voice_ids": saved,
+                        "characters_cloned": len(speakers),
+                        "phases_completed": active_phases,
+                    },
+                )
+
+            except Exception as e:
+                logger.exception("voice generation workflow failed")
+                await fail_job(session, uuid.UUID(job_id), str(e))
+
+    asyncio.run(_run())

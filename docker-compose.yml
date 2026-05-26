@@ -57,6 +57,127 @@ services:
       timeout: 5s
       retries: 5
 
+  cosyvoice:
+    image: cosyvoice/cosyvoice:latest
+    ports:
+      - "5001:5001"
+    volumes:
+      - cosyvoice_models:/app/models
+      - cosyvoice_output:/app/output
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    profiles:
+      - gpu
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  gptsovits:
+    image: gptsovits/gptsovits:latest
+    ports:
+      - "5002:5002"
+    volumes:
+      - gptsovits_models:/app/models
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    profiles:
+      - gpu
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5002/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  wan21:
+    image: wan21/wan21:latest
+    ports:
+      - "7860:7860"
+    volumes:
+      - wan21_models:/app/models
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    profiles:
+      - gpu
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7860/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 120s
+
+  cogvideox:
+    image: cogvideox/cogvideox:latest
+    ports:
+      - "7861:7861"
+    volumes:
+      - cogvideox_models:/app/models
+    environment:
+      - CUDA_VISIBLE_DEVICES=1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    profiles:
+      - gpu
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7861/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 120s
+
+  celery-video:
+    build:
+      context: ./backend
+    command: celery -A infra.celery_app worker -Q video_generation --concurrency=1 --loglevel=info
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      WAN21_BASE_URL: http://wan21:7860
+      COGVIDEOX_BASE_URL: http://cogvideox:7861
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    profiles:
+      - gpu
+
   celery:
     build:
       context: ./backend
@@ -64,6 +185,8 @@ services:
     environment:
       CELERY_BROKER_URL: redis://redis:6379/1
       CELERY_RESULT_BACKEND: redis://redis:6379/2
+      COSYVOICE_BASE_URL: http://cosyvoice:5001
+      GPTSOVITS_BASE_URL: http://gptsovits:5002
     depends_on:
       redis:
         condition: service_healthy
@@ -89,6 +212,8 @@ services:
       CELERY_RESULT_BACKEND: redis://redis:6379/2
       QDRANT_HOST: qdrant
       QDRANT_PORT: 6333
+      COSYVOICE_BASE_URL: http://cosyvoice:5001
+      GPTSOVITS_BASE_URL: http://gptsovits:5002
     depends_on:
       postgres:
         condition: service_healthy
@@ -116,3 +241,8 @@ volumes:
   redis_data:
   minio_data:
   qdrant_data:
+  cosyvoice_models:
+  cosyvoice_output:
+  gptsovits_models:
+  wan21_models:
+  cogvideox_models:

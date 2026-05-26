@@ -65,7 +65,18 @@
       "Bash(ls -la CHANGELOG*)",
       "Bash(ls -la README*)",
       "Bash(git add *)",
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "WebSearch",
+      "Bash(pytest tests/test_voice_prompts.py tests/test_voice_agent.py tests/test_voice_adapter.py tests/test_voice_workflow.py -v --tb=no)",
+      "Bash(git commit *)",
+      "Bash(cmd.exe *)",
+      "Bash(/c/Windows/System32/taskkill.exe *)",
+      "Bash(MSYS_NO_PATHCONV=1 taskkill *)",
+      "Bash(MSYS_NO_PATHCONV=1 powershell.exe *)",
+      "Bash(MSYS_NO_PATHCONV=1 docker ps *)",
+      "Bash(MSYS_NO_PATHCONV=1 python *)",
+      "Bash(MSYS_NO_PATHCONV=1 docker compose up *)",
+      "Bash(MSYS_NO_PATHCONV=1 uvicorn main:app --host 0.0.0.0 --port 8000 --reload)"
     ]
   }
 }

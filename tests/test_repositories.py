@@ -183,7 +183,11 @@ async def test_video_repository(session: AsyncSession):
     await session.flush()
 
     repo = VideoRepository(session)
-    video = Video(scene_id=scene.id, file_path="s3://videos/test.mp4")
+    video = Video(
+        project_id=project.id,
+        scene_id=scene.id,
+        file_path="s3://videos/test.mp4",
+    )
     await repo.create(video)
 
     videos = await repo.list_by_scene(scene.id)

@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     celery_broker_url: str = "redis://localhost:6379/1"
     celery_result_backend: str = "redis://localhost:6379/2"
 
+    wan21_base_url: str = "http://localhost:7860"
+    cogvideox_base_url: str = "http://localhost:7861"
+
     @property
     def database_url(self) -> str:
         return (
